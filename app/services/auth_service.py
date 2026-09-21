@@ -159,7 +159,6 @@ def authenticate_user(
                WHERE id=%s""",
             (maximum_attempts, lockout_seconds, user["id"]),
         )
-        db.commit()
         cursor.execute(
             """SELECT failed_login_attempts,
                       (locked_until IS NOT NULL AND locked_until > CURRENT_TIMESTAMP)
@@ -171,14 +170,41 @@ def authenticate_user(
         )
         failure = cursor.fetchone() or {}
         if failure.get("is_locked"):
+            cursor.execute(
+                """INSERT INTO audit_logs (organization_id,actor_user_id,action,resource_type,resource_id,result,metadata_json)
+                   VALUES (%s,%s,'auth_account_locked','app_user',%s,'failure',%s)""",
+                (
+                    user["organization_id"],
+                    user["id"],
+                    str(user["id"]),
+                    json.dumps({"reason": "max_failed_login_attempts_exceeded", "attempts": failure.get("failed_login_attempts")}),
+                ),
+            )
+            db.commit()
             raise AccountLockedError(failure.get("retry_after_seconds") or lockout_seconds)
         attempts = int(failure.get("failed_login_attempts") or 0)
+        cursor.execute(
+            """INSERT INTO audit_logs (organization_id,actor_user_id,action,resource_type,resource_id,result,metadata_json)
+               VALUES (%s,%s,'auth_login_failed','app_user',%s,'failure',%s)""",
+            (
+                user["organization_id"],
+                user["id"],
+                str(user["id"]),
+                json.dumps({"attempts_remaining": max(maximum_attempts - attempts, 0)}),
+            ),
+        )
+        db.commit()
         raise InvalidCredentialsError(max(maximum_attempts - attempts, 0))
     cursor.execute(
         """UPDATE app_users
            SET last_login_at=CURRENT_TIMESTAMP,failed_login_attempts=0,locked_until=NULL
            WHERE id=%s""",
         (user["id"],),
+    )
+    cursor.execute(
+        """INSERT INTO audit_logs (organization_id,actor_user_id,action,resource_type,resource_id,result)
+           VALUES (%s,%s,'auth_login_success','app_user',%s,'success')""",
+        (user["organization_id"], user["id"], str(user["id"])),
     )
     db.commit()
     return user

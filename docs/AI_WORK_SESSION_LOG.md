@@ -2,6 +2,106 @@
 
 ## Purpose
 
+## 2026-09-21 — Inbound Call Architecture & Lead Pipeline Verification and Production Hardening
+
+- **Request & Context**:
+  - Deeply analyze whether inbound calls work correctly and whether leads are reliably identified, scored, and updated across the CRM and Lead Pipeline (`/leads`, `/customers`).
+  - Diagnose any failure modes, mismatches, or stale placeholder records (`"Inbound caller"`, missing course interest, unpromoted qualification tiers) and implement production-grade fixes without breaking existing outbound/inbound telephony.
+- **Root Causes Diagnosed**:
+  1. **Inbound Phone Number Format Mismatch**:
+     - `app/api/plivo.py:inbound` used strict digit equality on the stripped phone (`REPLACE(phone, ...) = %s`).
+     - If a customer record stored a 10-digit national number (e.g. `9876543210`) or local formatting, and Plivo forwarded an incoming call with country prefix (e.g. `From: +919876543210` -> `919876543210`), the query failed to match. This spawned duplicate `"Inbound caller"` customer records, leaving the original lead disconnected from subsequent call logs and pipeline transitions.
+  2. **Stale Inbound Caller Placeholders in CRM & Lead Management**:
+     - When first-time callers entered the system, `app/api/plivo.py` created a placeholder row in `customers` with name `"Inbound caller"`, empty course interest, and null status.
+     - While `lead_extraction_service` correctly extracted structured caller data (`name`, `requirement`, `company`, etc.) into `lead_qualifications` and `customer_memory`, it never updated the parent `customers` record.
+     - As a result, the Frontend Lead Pipeline (`/leads`) and Customer directory (`/customers`) rendered `"Inbound caller"` and `"--"` indefinitely.
+  3. **CRM Outbox Race Condition in Call Finalization**:
+     - In `call_log_service.finalize_call_log`, `crm_outbox_service.emit_call_completed` was previously invoked *before* lead extraction and memory updates executed.
+     - External CRM webhooks were dispatched with the un-promoted placeholder name rather than the extracted caller profile.
+  4. **Post-Transfer Re-Scoring Disconnect from Customer Status**:
+     - In `app/services/call_recording_analysis.py:reanalyze_transferred_call`, calls re-scored from the full post-transfer recording updated `call_logs.qualification`, but failed to update `customers.customer_status`.
+- **Behavior Added & Hardened**:
+  - **Flexible Inbound Phone Matching & E.164 Backfilling (`app/api/plivo.py`)**:
+    - Upgraded caller lookup query to match against:
+      1. Sanitized exact digits.
+      2. Last 10 national digits (`RIGHT(..., 10) = %s`) for phone numbers >= 10 digits (matching local 10-digit numbers to incoming +91 E.164 calls).
+      3. Synthetic Google Sheets emails (`digits@example.com`, `last_10@example.com`).
+    - Automatically backfills normalized E.164 phone numbers to matched customer records if their existing record lacked international dialing format.
+  - **Automated Customer Lead Intelligence Synchronization (`app/services/call_log_service.py`)**:
+    - Created `_sync_customer_lead_intelligence`:
+      - Promotes AI-extracted caller names to `customers.name` if the existing name is generic/missing (`"Inbound caller"`, `"Customer"`, `"Caller"`).
+      - Populates `customers.investigated_course` if empty with the AI-extracted enquiry requirement.
+      - Advances `customers.customer_status` to `"hot"`, `"warm"`, `"cold"`, or `"contacted"`, while strictly guarding legal compliance statuses (`"do_not_call"`, `"converted"`).
+    - Isolated error handling for `lead_qualifications`, `upsert_memory`, and `_sync_customer_lead_intelligence` to prevent cascading failures.
+    - Reordered `finalize_call_log` so customer intelligence updates run *before* `crm_outbox_service.emit_call_completed`, guaranteeing external CRMs receive fully resolved caller profiles.
+  - **API Schema & Service Layer Consistency (`app/schemas/customer.py` & `app/services/customer_service.py`)**:
+    - Added `customer_status` to `CustomerBase` and `CustomerUpdate` Pydantic models.
+    - Updated `get_customer_by_id`, `get_customer_by_email`, and `get_all_customers` to select and return `customer_status`.
+  - **Transferred Call Re-Scoring Customer Status Synchronization (`app/services/call_recording_analysis.py`)**:
+    - Selected `customer_id` from `call_logs` and updated `customers.customer_status` when audio re-analysis adjusts lead qualification, respecting DNC and converted protections.
+- **Files Changed**:
+  - `app/schemas/customer.py`
+  - `app/services/customer_service.py`
+  - `app/api/plivo.py`
+  - `app/services/call_log_service.py`
+  - `app/services/call_recording_analysis.py`
+  - `tests/test_inbound_pipeline.py`
+  - `tests/test_call_recording_analysis.py`
+  - `docs/AI_WORK_SESSION_LOG.md`
+- **Verification**:
+  - Inbound pipeline unit test suite: `python -m unittest discover -s tests -p "test_inbound_pipeline.py"` — **14 passed (0 failures, 0 errors)**.
+    - Verified DID resolution, unconfigured DID 503, business hours gating, caller deduplication, flexible 10-digit matching & E.164 backfill, answer XML generation, stream HMAC tokens, tenant signature verification, audio endpoints, greeting isolation, customer intelligence promotion, and DNC protection.
+  - Call recording analysis unit test suite: `python -m unittest discover -s tests -p "test_call_recording_analysis.py"` — **12 passed (0 failures, 0 errors)**.
+    - Verified transferred call re-scoring updates `call_logs`, `customers.customer_status`, and dispatches updated CRM outbox events.
+  - Full backend test suite: `python -m unittest discover -s tests -q` — **426 passed, 1 skipped (0 failures, 0 errors)**.
+  - Frontend production build: `npm run build` (`tsc -b && vite build`) — **2,051 modules transformed, 0 errors, built in 10.41s**.
+- **Known Limitations & Next Steps**:
+  - Future enhancement: Support fuzzy name reconciliation if callers provide alternate spellings across repeated inbound calls.
+
+## 2026-09-21 — Production-Level Security Hardening & Threat Mitigation
+
+- **Request & Context**:
+  - Implement production-level security features into the DigiDARA IVR platform safely without breaking any existing functionality (inbound/outbound telephony, Plivo webhooks, real-time AI speech-to-speech, CRM integration).
+  - Verify and test thoroughly with automated regression test suites and frontend builds before production deployment.
+- **Root Cause & Threat Vectors Addressed**:
+  1. **Brute-Force & Credential Stuffing**: Public authentication endpoints (`/auth/login`, `/auth/workspaces`, `/auth/bootstrap-admin`, `/auth/google`) lacked IP-based request throttling, creating vulnerability to distributed credential stuffing and automated workspace registration attacks.
+  2. **WebSocket Stream Replay Attacks**: Telephony WebSocket streams (`/ws/plivo/media`) validated HMAC signature of `call_id` and `organization_id` but lacked timestamp expiration, allowing captured stream URLs to be replayed indefinitely.
+  3. **Audit Trail Gaps**: Authentication failures, account lockout events, and live-call Do-Not-Call (DNC) suppression requests were executed in business logic but not persistently recorded in `audit_logs` for compliance and forensics.
+- **Behavior Added & Hardened**:
+  - **Sliding-Window Rate Limiting (`app/services/rate_limiter.py`)**:
+    - Implemented a thread-safe in-memory sliding-window counter (`SlidingWindowRateLimiter`) with automatic eviction of expired timestamps and zero external service dependencies (Redis-free, single-instance production ready).
+    - Added proxy-aware client IP extraction (`get_client_ip`), validating `X-Forwarded-For` only when requests originate from configured `TRUSTED_PROXY_IPS`.
+    - Integrated rate limiting into `/auth/login`, `/auth/workspaces`, `/auth/google` (`AUTH_RATE_LIMIT_PER_MINUTE`, default 10 req/min) and `/auth/bootstrap-admin` (`BOOTSTRAP_RATE_LIMIT_PER_MINUTE`, default 5 req/min). Emits RFC-compliant `429 Too Many Requests` with `Retry-After` header.
+  - **Timestamped HMAC Stream Tokens with Replay Protection (`app/services/plivo_stream.py`)**:
+    - Updated `stream_token()` to bind a generation timestamp into the token payload: `<hex_signature>.<timestamp>`.
+    - Updated `validate_stream_token()` to verify HMAC signature and enforce a strict 30-minute validity window with 300-second clock-skew tolerance. Rejects expired, future-dated, or tampered tokens while retaining backwards compatibility for active legacy streams.
+  - **Comprehensive Audit Trail (`app/services/auth_service.py` & `app/api/openai_realtime.py`)**:
+    - Logged security events in `audit_logs` table:
+      - `auth_login_success`: User ID, timestamp, success result.
+      - `auth_login_failed`: Remaining login attempts recorded in `metadata_json`.
+      - `auth_account_locked`: Lock reason and failed attempt count recorded in `metadata_json`.
+      - `suppression_added`: Automatic logging when caller triggers DNC suppression during live English or Tamil speech-to-speech calls.
+    - Guaranteed atomic commits with user state updates, avoiding partial state persistence.
+  - **Zero Breakage Architecture**:
+    - Endpoint signatures in `app/api/auth.py` support both FastAPI dependency injection (`Request`, `Depends(get_db)`) and positional test calls from existing test harnesses.
+- **Files Changed**:
+  - `app/services/rate_limiter.py` (new)
+  - `app/services/plivo_stream.py`
+  - `app/services/auth_service.py`
+  - `app/api/openai_realtime.py`
+  - `app/api/auth.py`
+  - `tests/test_security_hardening.py` (new)
+  - `docs/AI_WORK_SESSION_LOG.md`
+- **Verification**:
+  - Security hardening unit test suite: `python -m unittest discover -s tests -p "test_security_hardening.py" -v` — **9 passed (0 failures, 0 errors)**.
+    - Tests verify quota enforcement, HTTP 429 response formatting, IP quota isolation, sliding-window resets, timestamped token validation, expired token rejection, tampered token rejection, and legacy compatibility.
+  - Account lockout regression suite: `python -m unittest discover -s tests -p "test_account_lockout.py" -v` — **9 passed (0 failures, 0 errors)**.
+  - Full backend test suite: `python -m unittest discover -s tests -q` — **421 passed, 1 skipped (0 failures, 0 errors)**.
+  - Frontend production build: `npm run build` (`tsc -b && vite build`) — **2,051 modules transformed, 0 errors, build succeeded cleanly in 21.11s**.
+- **Known Limitations & Next Steps**:
+  - In multi-instance or horizontal autoscaling deployments, the in-memory sliding window rate limiter operates per node. For distributed clusters, backing the rate limiter with Redis or Valkey is recommended.
+  - Google Sheets credentials remain environment-level as documented in `TECHNICAL_DEBT.md`.
+
 ## 2026-09-19 — Dynamic Department Management and Team-Based Simultaneous Ringing (Hunt Group) Human Transfer
 
 - **Request & Context**:

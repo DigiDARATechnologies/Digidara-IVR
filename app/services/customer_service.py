@@ -18,7 +18,7 @@ def get_customer_by_id(
 ) -> Optional[Dict[str, Any]]:
     """Retrieves a single customer by their database ID."""
     cursor = conn.cursor()
-    cursor.execute("SELECT id, organization_id, name, email, phone, language, investigated_course, internship_or_course, course_duration, created_at FROM customers WHERE id = %s AND organization_id = %s", (customer_id, organization_id))
+    cursor.execute("SELECT id, organization_id, name, email, phone, language, investigated_course, internship_or_course, course_duration, customer_status, created_at FROM customers WHERE id = %s AND organization_id = %s", (customer_id, organization_id))
     row = cursor.fetchone()
     if row:
         return row_to_dict(row)
@@ -29,7 +29,7 @@ def get_customer_by_email(
 ) -> Optional[Dict[str, Any]]:
     """Retrieves a single customer by their email address."""
     cursor = conn.cursor()
-    cursor.execute("SELECT id, organization_id, name, email, phone, language, investigated_course, internship_or_course, course_duration, created_at FROM customers WHERE email = %s AND organization_id = %s", (email, organization_id))
+    cursor.execute("SELECT id, organization_id, name, email, phone, language, investigated_course, internship_or_course, course_duration, customer_status, created_at FROM customers WHERE email = %s AND organization_id = %s", (email, organization_id))
     row = cursor.fetchone()
     if row:
         return row_to_dict(row)
@@ -41,7 +41,7 @@ def get_all_customers(
     """Retrieves a list of all customers with pagination."""
     cursor = conn.cursor()
     cursor.execute(
-        "SELECT id, organization_id, name, email, phone, language, investigated_course, internship_or_course, course_duration, created_at FROM customers WHERE organization_id=%s ORDER BY id DESC LIMIT %s OFFSET %s",
+        "SELECT id, organization_id, name, email, phone, language, investigated_course, internship_or_course, course_duration, customer_status, created_at FROM customers WHERE organization_id=%s ORDER BY id DESC LIMIT %s OFFSET %s",
         (organization_id, limit, skip)
     )
     rows = cursor.fetchall()

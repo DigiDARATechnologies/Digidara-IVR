@@ -13,6 +13,7 @@ class CustomerBase(BaseModel):
     investigated_course: Optional[str] = Field(None, description="Course name investigated by customer")
     internship_or_course: Optional[str] = Field(None, description="Whether it is an internship or a course")
     course_duration: Optional[str] = Field(None, description="Duration of the course")
+    customer_status: Optional[str] = Field(None, description="Current customer/lead status")
 
 class CustomerCreate(CustomerBase):
     pass
@@ -29,6 +30,7 @@ class CustomerUpdate(BaseModel):
     investigated_course: Optional[str] = Field(None, description="Course name investigated by customer")
     internship_or_course: Optional[str] = Field(None, description="Whether it is an internship or a course")
     course_duration: Optional[str] = Field(None, description="Duration of the course")
+    customer_status: Optional[str] = Field(None, description="Current customer/lead status")
 
 class CustomerResponse(CustomerBase):
     id: int

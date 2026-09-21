@@ -161,6 +161,9 @@ def build_ivr_prompt_xml(
 </Response>'''
 
 
+import time
+
+
 def _stream_secret() -> bytes:
     value = (
         os.getenv("PLIVO_STREAM_TOKEN_SECRET")
@@ -171,17 +174,56 @@ def _stream_secret() -> bytes:
     return value.encode("utf-8")
 
 
-def stream_token(customer_id: int, campaign_id: int, correlation_id: str) -> str:
-    message = f"{customer_id}:{campaign_id}:{correlation_id}".encode("utf-8")
-    return hmac.new(_stream_secret(), message, hashlib.sha256).hexdigest()
+def stream_token(
+    customer_id: int,
+    campaign_id: int,
+    correlation_id: str,
+    timestamp: int | None = None,
+) -> str:
+    """Generate a tamper-proof stream token bound to a timestamp."""
+    ts = int(timestamp if timestamp is not None else time.time())
+    message = f"{customer_id}:{campaign_id}:{correlation_id}:{ts}".encode("utf-8")
+    sig = hmac.new(_stream_secret(), message, hashlib.sha256).hexdigest()
+    return f"{sig}.{ts}"
 
 
 def validate_stream_token(
-    token: str, customer_id: int, campaign_id: int, correlation_id: str,
+    token: str,
+    customer_id: int,
+    campaign_id: int,
+    correlation_id: str,
+    max_age_seconds: int = 1800,
 ) -> bool:
+    """Validate token integrity, signature, and expiration window (default 30 mins)."""
     if not token or not _stream_secret():
         return False
-    return hmac.compare_digest(token, stream_token(customer_id, campaign_id, correlation_id))
+
+    secret = _stream_secret()
+
+    # Case 1: Timestamped token format: <signature>.<timestamp>
+    if "." in token:
+        parts = token.split(".", 1)
+        if len(parts) != 2:
+            return False
+        sig, ts_str = parts
+        try:
+            ts = int(ts_str)
+        except ValueError:
+            return False
+
+        # Expiration check
+        now = int(time.time())
+        if ts > now + 300 or (now - ts) > max_age_seconds:
+            return False
+
+        expected_message = f"{customer_id}:{campaign_id}:{correlation_id}:{ts}".encode("utf-8")
+        expected_sig = hmac.new(secret, expected_message, hashlib.sha256).hexdigest()
+        return hmac.compare_digest(sig, expected_sig)
+
+    # Case 2: Legacy fallback token (un-timestamped) for backward compatibility
+    legacy_message = f"{customer_id}:{campaign_id}:{correlation_id}".encode("utf-8")
+    legacy_sig = hmac.new(secret, legacy_message, hashlib.sha256).hexdigest()
+    return hmac.compare_digest(token, legacy_sig)
 
 
 def websocket_signature_url(base: str, path: str, query: str) -> str:

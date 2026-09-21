@@ -106,7 +106,7 @@ def reanalyze_transferred_call(
         return False
 
     cursor.execute(
-        """SELECT provider_recording_id, transcript, status, call_status, language
+        """SELECT customer_id, provider_recording_id, transcript, status, call_status, language
              FROM call_logs WHERE id=%s AND organization_id=%s""",
         (call_log_id, organization_id),
     )
@@ -193,6 +193,19 @@ def reanalyze_transferred_call(
                 lead_status, call_log_id, organization_id,
             ),
         )
+        customer_id = log.get("customer_id")
+        if customer_id and qualification in {"hot", "warm", "cold"}:
+            try:
+                cursor.execute(
+                    """UPDATE customers
+                       SET customer_status=%s, updated_at=CURRENT_TIMESTAMP
+                       WHERE id=%s AND organization_id=%s
+                         AND (customer_status IS NULL OR customer_status NOT IN ('do_not_call', 'converted'))""",
+                    (qualification, customer_id, organization_id),
+                )
+            except Exception as cust_err:
+                print(f"[call_recording_analysis] Failed to sync customer status: {cust_err}")
+
         cursor.execute(
             "SELECT * FROM call_logs WHERE id=%s AND organization_id=%s",
             (call_log_id, organization_id),

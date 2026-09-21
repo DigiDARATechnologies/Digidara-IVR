@@ -50,6 +50,7 @@ class ReanalyzeTransferredCallTests(unittest.TestCase):
         cursor.fetchone.side_effect = [
             {"id": 6},
             {
+                "customer_id": 555,
                 "provider_recording_id": "rec-1", "transcript": "AI: hello\nCustomer: I need business help",
                 "status": "completed", "call_status": "completed",
             },
@@ -67,6 +68,13 @@ class ReanalyzeTransferredCallTests(unittest.TestCase):
         self.assertIn("agent: happy to help", params[0])  # full_transcript includes recording text
         self.assertEqual(85, params[3])  # lead_score
         self.assertEqual("hot", params[4])  # qualification derived from score >= 80
+
+        # Verify customer_status is updated for customer_id=555
+        customer_update = next(c for c in cursor.execute.call_args_list if "UPDATE customers" in c.args[0])
+        self.assertEqual("hot", customer_update.args[1][0])
+        self.assertEqual(555, customer_update.args[1][1])
+        self.assertEqual(42, customer_update.args[1][2])
+
         # The corrected result must reach a CRM that may already have the
         # first, rushed classification -- not just update our own database.
         mock_crm_outbox.emit_call_completed.assert_called_once_with(db, updated_row, commit=False)

@@ -158,6 +158,37 @@ class InboundPipelineComprehensiveTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(333, mock_create_log.call_args.args[2])  # customer_id re-used
         self.assertIn(b"customer_id=333", response.body)
 
+    async def test_open_office_flexible_phone_matching_and_backfill(self):
+        db = MagicMock()
+        cursor = db.cursor.return_value
+        # Match returns existing customer who had local 10-digit phone "9876543210"
+        cursor.fetchone.return_value = {"id": 444, "phone": "9876543210"}
+        request = self._make_inbound_request(self.did, "+919876543210", call_uuid="call-backfill-1")
+        route = {"organization_id": self.org_id, "campaign_id": self.campaign_id}
+
+        with patch.object(plivo_api, "_signed_form", new=AsyncMock(return_value=self._form)):
+            with patch.object(phone_number_service, "get_active_route_for_number", return_value=route):
+                with patch.object(business_hours_service, "is_open_now", return_value={"is_open": True}):
+                    with patch.object(call_log_service, "get_call_log_by_sid", return_value=None):
+                        with patch.object(
+                            call_log_service, "create_call_log",
+                            return_value={"id": 1001, "correlation_id": "in_call-backfill-1"},
+                        ) as mock_create_log:
+                            response = await plivo_api.inbound(request, db)
+
+        self.assertEqual(200, response.status_code)
+        mock_create_log.assert_called_once()
+        self.assertEqual(444, mock_create_log.call_args.args[2])
+
+        # Verify normalized phone was backfilled
+        backfill_calls = [
+            c for c in cursor.execute.call_args_list
+            if "UPDATE customers SET phone" in str(c.args[0])
+        ]
+        self.assertEqual(1, len(backfill_calls))
+        self.assertEqual("+919876543210", backfill_calls[0].args[1][0])
+        self.assertEqual(444, backfill_calls[0].args[1][1])
+
     # --- 5. Answer Callback Generates Valid Media Stream XML & HMAC Token ---
 
     async def test_answer_callback_generates_stream_xml_with_valid_hmac_token(self):
@@ -318,5 +349,154 @@ class InboundAudioEndpointsAndGreetingsTests(unittest.TestCase):
         self.assertNotIn("எப்படி உதவ முடியும்?", outbound_ta)
 
 
+class InboundLeadUpdateTests(unittest.TestCase):
+    def test_sync_customer_lead_intelligence_promotes_name_course_and_status(self):
+        db = MagicMock()
+        cursor = db.cursor.return_value
+        cursor.fetchone.return_value = {
+            "id": 101,
+            "name": "Inbound caller",
+            "investigated_course": "",
+            "customer_status": None,
+        }
+
+        call_log_service._sync_customer_lead_intelligence(
+            conn=db,
+            customer_id=101,
+            organization_id=42,
+            lead_fields={"name": "Karthik Rajan", "requirement": "Data Science with AI"},
+            effective_qualification="hot",
+            lead_status="interested",
+            call_status="completed",
+        )
+
+        update_calls = [
+            c for c in cursor.execute.call_args_list
+            if "UPDATE customers SET" in str(c.args[0])
+        ]
+        self.assertEqual(1, len(update_calls), "Expected 1 UPDATE on customers")
+        sql, params = update_calls[0].args
+        self.assertIn("name=%s", sql)
+        self.assertIn("investigated_course=%s", sql)
+        self.assertIn("customer_status=%s", sql)
+        self.assertEqual(params[0], "Karthik Rajan")
+        self.assertEqual(params[1], "Data Science with AI")
+        self.assertEqual(params[2], "hot")
+        self.assertEqual(params[3], 101)
+        self.assertEqual(params[4], 42)
+
+    def test_sync_customer_lead_intelligence_protects_dnc_and_converted(self):
+        db = MagicMock()
+        cursor = db.cursor.return_value
+        cursor.fetchone.return_value = {
+            "id": 102,
+            "name": "Existing Client",
+            "investigated_course": "Full Stack",
+            "customer_status": "do_not_call",
+        }
+
+        call_log_service._sync_customer_lead_intelligence(
+            conn=db,
+            customer_id=102,
+            organization_id=42,
+            lead_fields={"name": "Different Name", "requirement": "New Course"},
+            effective_qualification="hot",
+            lead_status="interested",
+            call_status="completed",
+        )
+
+        update_calls = [
+            c for c in cursor.execute.call_args_list
+            if "UPDATE customers SET" in str(c.args[0])
+        ]
+        self.assertEqual(0, len(update_calls), "DNC customer with existing name should not be updated")
+
+    def test_sync_customer_lead_intelligence_ignores_generic_placeholder_names(self):
+        db = MagicMock()
+        cursor = db.cursor.return_value
+        cursor.fetchone.return_value = {
+            "id": 103,
+            "name": "Inbound caller",
+            "investigated_course": "Cyber Security",
+            "customer_status": "warm",
+        }
+
+        # Extracted name is also a placeholder
+        call_log_service._sync_customer_lead_intelligence(
+            conn=db,
+            customer_id=103,
+            organization_id=42,
+            lead_fields={"name": "Unknown", "requirement": "Cyber Security"},
+            effective_qualification="warm",
+            lead_status="interested",
+            call_status="completed",
+        )
+
+        update_calls = [
+            c for c in cursor.execute.call_args_list
+            if "UPDATE customers SET" in str(c.args[0])
+        ]
+        self.assertEqual(0, len(update_calls), "Placeholder extracted name should not update customers table")
+
+    @patch("app.services.memory_service.upsert_memory")
+    @patch("app.services.memory_service.extract_questions_from_transcript")
+    @patch("app.services.crm_outbox_service.emit_call_completed")
+    @patch("app.services.call_log_service._sync_customer_lead_intelligence")
+    @patch("app.services.lead_extraction_service.extract_lead_fields")
+    @patch("app.services.groq_service.analyze_conversation")
+    def test_finalize_call_log_syncs_lead_intelligence_before_emitting_crm_outbox(
+        self, mock_analyze, mock_extract_lead, mock_sync_intelligence, mock_emit_crm,
+        mock_extract_questions, mock_upsert_memory,
+    ):
+        db = MagicMock()
+        cursor = db.cursor.return_value
+
+        call_log_row = {
+            "id": 55,
+            "call_sid": "call-sync-test-01",
+            "customer_id": 105,
+            "organization_id": 42,
+            "created_at": "2026-09-21 10:00:00",
+            "status": "in-progress",
+            "call_status": "in-progress",
+            "transcript": "Caller: Hello, I am Rajesh, interested in AWS DevOps.",
+            "lead_score": 85,
+            "qualification": "hot",
+            "summary": "",
+            "quick_summary": "",
+        }
+
+        cursor.fetchone.side_effect = [
+            call_log_row,  # Initial SELECT
+            call_log_row,  # SELECT after UPDATE
+        ]
+
+        mock_analyze.return_value = (
+            '{"summary": "Rajesh enquired about AWS DevOps.", '
+            '"quick_summary": "AWS DevOps enquiry", '
+            '"lead_score": 85, "qualification": "hot", '
+            '"status": "interested"}'
+        )
+        mock_extract_lead.return_value = {
+            "name": "Rajesh",
+            "phone": "+919876543210",
+            "requirement": "AWS DevOps",
+            "company": "TechCorp",
+        }
+
+        call_log_service.finalize_call_log(
+            conn=db,
+            call_sid="call-sync-test-01",
+            status="completed",
+            duration=45,
+            transcript="Caller: Hello, I am Rajesh, interested in AWS DevOps.",
+        )
+
+        mock_sync_intelligence.assert_called_once()
+        mock_emit_crm.assert_called_once()
+        db.commit.assert_called()
+
+
 if __name__ == "__main__":
     unittest.main()
+

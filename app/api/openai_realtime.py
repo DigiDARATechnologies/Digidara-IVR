@@ -1094,6 +1094,15 @@ async def openai_realtime(
                                         phone_hash,
                                     ),
                                 )
+                                cur.execute(
+                                    """INSERT INTO audit_logs (organization_id,action,resource_type,resource_id,result,metadata_json)
+                                       VALUES (%s,'suppression_added','customer',%s,'success',%s)""",
+                                    (
+                                        organization_id,
+                                        str(customer_id),
+                                        json.dumps({"source": "realtime_voice", "call_sid": call_sid, "intent": "do_not_call"}),
+                                    ),
+                                )
                         db.commit()
 
                 # A new validated turn supersedes every older pending response.
@@ -1403,6 +1412,15 @@ async def openai_realtime(
                                                         (
                                                             organization_id,
                                                             phone_hash,
+                                                        ),
+                                                    )
+                                                    cur.execute(
+                                                        """INSERT INTO audit_logs (organization_id,action,resource_type,resource_id,result,metadata_json)
+                                                           VALUES (%s,'suppression_added','customer',%s,'success',%s)""",
+                                                        (
+                                                            organization_id,
+                                                            str(customer_id),
+                                                            json.dumps({"source": "realtime_voice", "call_sid": call_sid, "intent": "do_not_call"}),
                                                         ),
                                                     )
                                             db.commit()

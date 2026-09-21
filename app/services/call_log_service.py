@@ -196,6 +196,82 @@ def update_call_log_status(conn: Any, call_sid: str, status: str) -> Optional[Di
             
     return updated_log
 
+def _sync_customer_lead_intelligence(
+    conn: Any,
+    customer_id: int,
+    organization_id: int,
+    lead_fields: Dict[str, Any],
+    effective_qualification: Optional[str],
+    lead_status: Optional[str],
+    call_status: str,
+) -> None:
+    """Promote extracted lead fields and qualification to the persistent customer record."""
+    cursor = conn.cursor()
+    cursor.execute(
+        "SELECT id, name, investigated_course, customer_status FROM customers WHERE id=%s AND organization_id=%s",
+        (customer_id, organization_id),
+    )
+    cust_row = cursor.fetchone() or {}
+    if not cust_row:
+        return
+
+    extracted_name = (lead_fields.get("name") or "").strip()
+    extracted_req = (lead_fields.get("requirement") or "").strip()
+    current_name = (cust_row.get("name") or "").strip()
+    current_course = (cust_row.get("investigated_course") or "").strip()
+    current_status = (cust_row.get("customer_status") or "").strip()
+
+    updates = []
+    params = []
+
+    # If current name is generic or placeholder, promote extracted name
+    is_generic_name = (
+        not current_name
+        or current_name.lower() in {"inbound caller", "customer", "unknown", "caller"}
+        or current_name.lower().startswith("inbound")
+    )
+    is_valid_extracted_name = (
+        extracted_name
+        and extracted_name.lower() not in {"inbound caller", "customer", "unknown", "caller", "none", "null", "n/a"}
+        and len(extracted_name) >= 2
+    )
+    if is_generic_name and is_valid_extracted_name:
+        updates.append("name=%s")
+        params.append(extracted_name)
+
+    # If course/requirement is missing, populate with extracted requirement
+    is_valid_extracted_req = (
+        extracted_req
+        and extracted_req.lower() not in {"none", "null", "n/a", "unknown"}
+        and len(extracted_req) >= 2
+    )
+    if not current_course and is_valid_extracted_req:
+        updates.append("investigated_course=%s")
+        params.append(extracted_req)
+
+    # Update customer status based on qualification / lead status
+    # (do not overwrite 'do_not_call' or 'converted')
+    if current_status not in {"do_not_call", "converted"}:
+        new_status = None
+        if effective_qualification in {"hot", "warm", "cold"}:
+            new_status = effective_qualification
+        elif lead_status in {"interested", "callback_requested", "not_interested"}:
+            new_status = lead_status
+        elif str(call_status).lower() == "completed":
+            new_status = "contacted"
+
+        if new_status and new_status != current_status:
+            updates.append("customer_status=%s")
+            params.append(new_status)
+
+    if updates:
+        params.extend((customer_id, organization_id))
+        cursor.execute(
+            f"UPDATE customers SET {', '.join(updates)}, updated_at=CURRENT_TIMESTAMP WHERE id=%s AND organization_id=%s",
+            tuple(params),
+        )
+
+
 def finalize_call_log(
     conn: Any,
     call_sid: str,
@@ -306,18 +382,90 @@ def finalize_call_log(
     row = cursor.fetchone()
     updated_log = row_to_dict(row) if row else None
 
-    if not already_finalized and updated_log:
-        try:
-            from app.services import crm_outbox_service
-            crm_outbox_service.emit_call_completed(conn, updated_log, commit=False)
-        except Exception as crm_err:
-            print(f"[finalize_call_log] Failed to emit CRM outbox event: {type(crm_err).__name__}")
-    # Commit the terminal call state and its outbox event atomically.
+    if not already_finalized:
+        # --- Lead extraction & customer profile update ---
+        if transcript and status in ("completed", "busy", "no-answer"):
+            try:
+                from app.services.lead_extraction_service import extract_lead_fields
+                from app.services.memory_service import extract_questions_from_transcript, upsert_memory
+
+                lead_fields = extract_lead_fields(transcript)
+                effective_score = (updated_log or {}).get("lead_score")
+                effective_qualification = (updated_log or {}).get("qualification")
+
+                try:
+                    cursor.execute("""
+                        INSERT INTO lead_qualifications
+                          (call_log_id, customer_id, extracted_name, extracted_phone,
+                           company, requirement, budget, timeline, lead_score, qualification)
+                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    """, (
+                        log["id"],
+                        customer_id,
+                        lead_fields.get("name"),
+                        lead_fields.get("phone"),
+                        lead_fields.get("company"),
+                        lead_fields.get("requirement"),
+                        lead_fields.get("budget"),
+                        lead_fields.get("timeline"),
+                        effective_score,
+                        effective_qualification,
+                    ))
+                except Exception as db_err:
+                    print(f"[finalize_call_log] Failed to save lead_qualifications row: {db_err}")
+
+                try:
+                    new_questions = extract_questions_from_transcript(transcript)
+                    upsert_memory(
+                        conn,
+                        customer_id=customer_id,
+                        name=lead_fields.get("name"),
+                        intent=lead_fields.get("requirement"),
+                        new_questions=new_questions,
+                        lead_status=effective_qualification,
+                        summary=quick_summary or summary or None,
+                    )
+                except Exception as mem_err:
+                    print(f"[finalize_call_log] Customer memory update failed: {mem_err}")
+
+                try:
+                    _sync_customer_lead_intelligence(
+                        conn,
+                        customer_id=customer_id,
+                        organization_id=int(updated_log["organization_id"]),
+                        lead_fields=lead_fields,
+                        effective_qualification=effective_qualification,
+                        lead_status=lead_status,
+                        call_status=status,
+                    )
+                except Exception as sync_err:
+                    print(f"[finalize_call_log] Customer lead sync failed: {sync_err}")
+            except Exception as lead_err:
+                print(f"[finalize_call_log] Lead extraction failed: {lead_err}")
+        elif customer_id and updated_log:
+            try:
+                _sync_customer_lead_intelligence(
+                    conn,
+                    customer_id=customer_id,
+                    organization_id=int(updated_log["organization_id"]),
+                    lead_fields={},
+                    effective_qualification=qualification,
+                    lead_status=lead_status,
+                    call_status=status,
+                )
+            except Exception as sync_err:
+                print(f"[finalize_call_log] Customer status sync failed: {sync_err}")
+
+        if updated_log:
+            try:
+                from app.services import crm_outbox_service
+                crm_outbox_service.emit_call_completed(conn, updated_log, commit=False)
+            except Exception as crm_err:
+                print(f"[finalize_call_log] Failed to emit CRM outbox event: {type(crm_err).__name__}")
+
+    # Commit the terminal call state, lead qualifications, customer update, and outbox event atomically.
     conn.commit()
 
-    # Realtime finalization and Twilio's completed callback can both arrive.
-    # The second event may update authoritative duration/status above, but must
-    # not re-run sheet queues, lead extraction, or replace the accepted summary.
     if already_finalized:
         return updated_log
 
@@ -360,57 +508,6 @@ def finalize_call_log(
             ).start()
         except Exception as sheet_err:
             print("Failed to trigger Google Sheets update and queue thread:", sheet_err)
-
-    # --- Lead extraction: pull structured fields (phone, company, requirement,
-    # budget, timeline) + a 0-100 score from the transcript using a dedicated
-    # LLM pass, then update structured customer memory for continuity.
-    if transcript and status in ("completed", "busy", "no-answer"):
-        try:
-            from app.services.lead_extraction_service import extract_lead_fields
-            from app.services.memory_service import extract_questions_from_transcript, upsert_memory
-
-            lead_fields = extract_lead_fields(transcript)
-
-            # Structured extraction owns only the descriptive fields. The
-            # accepted call_logs score/tier is copied verbatim as the single
-            # persisted source of truth.
-            effective_score = (updated_log or {}).get("lead_score")
-            effective_qualification = (updated_log or {}).get("qualification")
-
-            try:
-                cursor.execute("""
-                    INSERT INTO lead_qualifications
-                      (call_log_id, customer_id, extracted_name, extracted_phone,
-                       company, requirement, budget, timeline, lead_score, qualification)
-                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-                """, (
-                    log["id"],
-                    customer_id,
-                    lead_fields.get("name"),
-                    lead_fields.get("phone"),
-                    lead_fields.get("company"),
-                    lead_fields.get("requirement"),
-                    lead_fields.get("budget"),
-                    lead_fields.get("timeline"),
-                    effective_score,
-                    effective_qualification,
-                ))
-                conn.commit()
-            except Exception as db_err:
-                print(f"[finalize_call_log] Failed to save lead_qualifications row: {db_err}")
-
-            new_questions = extract_questions_from_transcript(transcript)
-            upsert_memory(
-                conn,
-                customer_id=customer_id,
-                name=lead_fields.get("name"),
-                intent=lead_fields.get("requirement"),
-                new_questions=new_questions,
-                lead_status=effective_qualification,
-                summary=quick_summary or summary or None,
-            )
-        except Exception as lead_err:
-            print(f"[finalize_call_log] Lead extraction / memory update failed: {lead_err}")
 
     return updated_log
 

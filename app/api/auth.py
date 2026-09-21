@@ -1,9 +1,14 @@
 import os
 import secrets
 
-from fastapi import APIRouter, Depends, Header, HTTPException
+from fastapi import APIRouter, Depends, Header, HTTPException, Request
 from pydantic import BaseModel, Field
 from app.database.db import get_db
+from app.services.rate_limiter import (
+    get_auth_rate_limit,
+    get_bootstrap_rate_limit,
+    limiter,
+)
 from app.services.auth_service import (
     AccountLockedError,
     GoogleTokenError,
@@ -82,7 +87,12 @@ def auth_status(db=Depends(get_db)):
     return {"needs_admin_onboarding": int((cur.fetchone() or {}).get("total") or 0) == 0}
 
 @router.post("/auth/bootstrap-admin")
-def bootstrap_admin(data: AdminInput, db=Depends(get_db)):
+def bootstrap_admin(*args, **kwargs):
+    request = next((a for a in args if isinstance(a, Request)), kwargs.get("request"))
+    data = next((a for a in args if isinstance(a, AdminInput)), kwargs.get("data"))
+    db = next((a for a in args if not isinstance(a, (Request, AdminInput))), kwargs.get("db"))
+    if request:
+        limiter.enforce(request, "bootstrap_admin", limit=get_bootstrap_rate_limit())
     cur=db.cursor(); cur.execute("SELECT COUNT(*) total FROM app_users WHERE role_code='admin' AND password_hash IS NOT NULL")
     if int((cur.fetchone() or {}).get("total") or 0) != 0: raise HTTPException(409, "Administrator already exists")
     _require_bootstrap_key(data.bootstrap_key)
@@ -96,8 +106,13 @@ def bootstrap_admin(data: AdminInput, db=Depends(get_db)):
 
 
 @router.post("/auth/workspaces", status_code=201)
-def create_workspace(data: WorkspaceInput, db=Depends(get_db)):
+def create_workspace(*args, **kwargs):
     """Register a workspace and its first administrator."""
+    request = next((a for a in args if isinstance(a, Request)), kwargs.get("request"))
+    data = next((a for a in args if isinstance(a, WorkspaceInput)), kwargs.get("data"))
+    db = next((a for a in args if not isinstance(a, (Request, WorkspaceInput))), kwargs.get("db"))
+    if request:
+        limiter.enforce(request, "create_workspace", limit=get_auth_rate_limit())
     try:
         user = workspace_service.create_workspace_with_admin(
             db,
@@ -112,7 +127,12 @@ def create_workspace(data: WorkspaceInput, db=Depends(get_db)):
     return {"token": issue_token(user), "user": user}
 
 @router.post("/auth/login")
-def login(data: LoginInput, db=Depends(get_db)):
+def login(*args, **kwargs):
+    request = next((a for a in args if isinstance(a, Request)), kwargs.get("request"))
+    data = next((a for a in args if isinstance(a, LoginInput)), kwargs.get("data"))
+    db = next((a for a in args if not isinstance(a, (Request, LoginInput))), kwargs.get("db"))
+    if request:
+        limiter.enforce(request, "login", limit=get_auth_rate_limit())
     try:
         user = authenticate_user(
             db, data.email, data.password, data.workspace_slug
@@ -146,7 +166,12 @@ def login(data: LoginInput, db=Depends(get_db)):
     return {"token":issue_token(user),"user":{k:user[k] for k in ("id","organization_id","organization_name","workspace_slug","email","full_name","role_code")}}
 
 @router.post("/auth/google")
-def google_login(data: GoogleAuthInput, db=Depends(get_db)):
+def google_login(*args, **kwargs):
+    request = next((a for a in args if isinstance(a, Request)), kwargs.get("request"))
+    data = next((a for a in args if isinstance(a, GoogleAuthInput)), kwargs.get("data"))
+    db = next((a for a in args if not isinstance(a, (Request, GoogleAuthInput))), kwargs.get("db"))
+    if request:
+        limiter.enforce(request, "google_login", limit=get_auth_rate_limit())
     try:
         claims = verify_google_id_token(data.credential)
     except GoogleTokenError as exc:

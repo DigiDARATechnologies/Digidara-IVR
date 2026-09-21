@@ -206,16 +206,29 @@ async def inbound(
     cursor = db.cursor()
     phone = str(data.get("From") or "").strip()
     digits = re.sub(r"\D", "", phone)
+    last_10 = digits[-10:] if len(digits) >= 10 else digits
+    sheet_email_1 = f"{digits}@example.com" if digits else ""
+    sheet_email_2 = f"{last_10}@example.com" if last_10 else ""
     cursor.execute(
-        """SELECT id FROM customers
+        """SELECT id, phone FROM customers
            WHERE organization_id=%s
-             AND REPLACE(REPLACE(REPLACE(phone,'+',''),' ',''),'-','')=%s
+             AND (
+               REPLACE(REPLACE(REPLACE(phone,'+',''),' ',''),'-','')=%s
+               OR (LENGTH(%s) >= 10 AND RIGHT(REPLACE(REPLACE(REPLACE(phone,'+',''),' ',''),'-',''), 10)=%s)
+               OR email IN (%s, %s)
+             )
            ORDER BY id DESC LIMIT 1""",
-        (organization_id, digits),
+        (organization_id, digits, last_10, last_10, sheet_email_1, sheet_email_2),
     )
     customer = cursor.fetchone()
     if customer:
         customer_id = int(customer["id"])
+        if phone and phone.startswith("+") and not str(customer.get("phone") or "").startswith("+"):
+            cursor.execute(
+                "UPDATE customers SET phone=%s WHERE id=%s AND organization_id=%s",
+                (phone, customer_id, organization_id),
+            )
+            db.commit()
     else:
         email = f"inbound_{digits or os.urandom(6).hex()}@phone.local"
         language = (os.getenv("PLIVO_INBOUND_LANGUAGE") or "tamil").strip().lower()
