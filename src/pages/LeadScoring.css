@@ -1,0 +1,22 @@
+.lead-grid {
+  @apply grid gap-4 lg:grid-cols-[360px_1fr];
+}
+
+.score-gauge {
+  --score: 0%;
+  @apply mx-auto flex h-60 w-60 items-center justify-center rounded-full;
+  background: conic-gradient(#4f46e5 var(--score), #e2e8f0 0);
+  transition: background 300ms ease;
+}
+
+.score-gauge-inner {
+  @apply flex h-40 w-40 flex-col items-center justify-center rounded-full bg-white shadow-sm;
+}
+
+.score-gauge-inner span {
+  @apply text-5xl font-extrabold text-slate-950;
+}
+
+.score-gauge-inner small {
+  @apply text-sm font-bold text-slate-500;
+}

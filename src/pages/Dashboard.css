@@ -1,0 +1,31 @@
+.dashboard-hero {
+  @apply mb-6 rounded-2xl bg-gradient-to-r from-indigo-600 to-violet-600 p-6 text-white shadow-soft md:p-8;
+}
+
+.dashboard-hero-eyebrow {
+  @apply text-xs font-bold uppercase tracking-widest text-indigo-200;
+}
+
+.dashboard-hero-title {
+  @apply mt-2 text-2xl font-extrabold leading-tight md:text-4xl;
+}
+
+.dashboard-hero-sub {
+  @apply mt-2 max-w-2xl text-sm text-indigo-100 md:text-base;
+}
+
+.dashboard-live-bar {
+  @apply mt-4 inline-flex items-center gap-2 rounded-full bg-white/15 px-4 py-2 text-sm font-bold backdrop-blur;
+}
+
+.dashboard-grid {
+  @apply grid gap-4 sm:grid-cols-2 xl:grid-cols-4;
+}
+
+.dashboard-charts {
+  @apply mt-6 grid gap-4 xl:grid-cols-[1.3fr_0.7fr];
+}
+
+.quick-call {
+  @apply mt-6 grid gap-4 lg:grid-cols-[1fr_360px];
+}

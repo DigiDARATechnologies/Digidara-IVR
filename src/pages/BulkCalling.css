@@ -1,0 +1,54 @@
+.bulk-grid {
+  @apply grid gap-4 lg:grid-cols-[1fr_360px];
+}
+
+.sheet-columns {
+  @apply grid gap-2 text-sm text-slate-600;
+}
+
+.row-active td {
+  background: var(--accent-soft);
+  border-left: 3px solid var(--accent);
+}
+
+.source-toggle {
+  display: inline-flex;
+  gap: 4px;
+  padding: 4px;
+  margin-bottom: 18px;
+  border: 1px solid var(--line);
+  border-radius: 11px;
+  background: var(--surface-2);
+}
+.source-toggle button {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 14px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+}
+.source-toggle button.active {
+  background: var(--surface);
+  color: var(--accent);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08);
+}
+
+.upload-filename {
+  display: block;
+  margin-top: 6px;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.upload-hint {
+  margin-top: 14px;
+  font-size: 11px;
+  line-height: 1.6;
+  color: var(--muted);
+}

@@ -1,0 +1,11 @@
+/* Layout rules intentionally use design tokens so a theme switch changes the
+   complete application instead of only the toolbar. */
+.app-shell{min-height:100vh;background:var(--page);color:var(--ink)}
+.sidebar{position:fixed;inset:0 auto 0 0;z-index:40;display:flex;width:248px;flex-direction:column;padding:22px 16px;background:var(--surface);border-right:1px solid var(--line);overflow-y:auto}
+.topbar{position:fixed;top:0;right:0;left:248px;z-index:35;height:72px;display:flex;align-items:center;justify-content:space-between;gap:18px;padding:0 26px;background:color-mix(in srgb,var(--surface) 94%,transparent);border-bottom:1px solid var(--line);backdrop-filter:blur(16px)}
+.page-wrap{min-height:100vh;margin-left:248px;padding:104px 28px 40px;background:var(--page)}
+.page-wrap>*{min-width:0}.panel,.card,.metric,.profile-card{min-width:0;overflow-wrap:anywhere}.panel img,.card img{max-width:100%;height:auto}.admin-grid>*{min-width:0}
+.page-head{display:flex;align-items:flex-end;justify-content:space-between;gap:16px;margin-bottom:24px}.page-head h1{color:var(--ink)}.page-head p{color:var(--muted)}
+.mobile-drawer{position:fixed;inset:0 auto 0 0;z-index:50;width:min(86vw,320px);padding:20px 16px;background:var(--surface);box-shadow:var(--shadow);overflow-y:auto}
+.mobile-drawer-close{position:absolute;top:15px;right:12px;width:36px;height:36px;display:grid;place-items:center;border:1px solid var(--line);border-radius:9px;background:var(--surface);color:var(--ink)}
+@media(max-width:767px){.sidebar{display:none}.topbar{left:0;height:64px;padding:0 12px}.page-wrap{margin-left:0;padding:88px 14px 30px}.page-head{align-items:flex-start;flex-direction:column}}

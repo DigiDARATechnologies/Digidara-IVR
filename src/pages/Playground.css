@@ -1,0 +1,19 @@
+.playground-grid {
+  @apply grid gap-4 lg:grid-cols-[320px_1fr];
+}
+
+.playground-prompt-preview {
+  @apply rounded-lg border border-slate-100 bg-slate-50 p-3;
+}
+
+.chat-window {
+  @apply flex min-h-[520px] flex-col rounded-lg border border-slate-100 bg-white shadow-sm;
+}
+
+.chat-bubble-user {
+  @apply ml-auto max-w-[80%] rounded-lg bg-indigo-600 px-4 py-3 text-sm text-white;
+}
+
+.chat-bubble-ai {
+  @apply max-w-[80%] rounded-lg bg-slate-100 px-4 py-3 text-sm text-slate-800;
+}

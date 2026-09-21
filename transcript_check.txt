@@ -1,0 +1,17 @@
+TRANSCRIPT:
+assistant: Hello, this is the AI voice assistant from Digidara. What do you need help with today — Business, Sales, or Education?
+assistant: Hello, this is the AI voice assistant from Digidara. What do you need help with today — Business, Sales, or Education?
+user: А...
+assistant: No worries, take a moment. Which one do you need—Business, Sales, or Education?
+user: Uh...
+assistant: Got it, no problem. Which one do you need—Business, Sales, or Education?
+assistant: Sorry, I didn
+user: 你好,你的
+user: There's nothing I have.
+assistant: Okay, let me ask you one quick thing to clarify.
+assistant: I’m not sure I caught that. Which would you like help with today—Business, Sales, or Education?
+user: Business.
+assistant: Got it, I’m connecting you to a human in Business now.
+
+QUICK SUMMARY:
+Customer asked for Business help and was connected to a human agent.

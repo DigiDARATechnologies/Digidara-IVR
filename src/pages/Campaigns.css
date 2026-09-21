@@ -1,0 +1,19 @@
+.campaign-grid {
+  @apply grid gap-4 md:grid-cols-2 xl:grid-cols-3;
+}
+
+.prompt-chip {
+  @apply rounded-full border border-indigo-100 bg-indigo-50 px-3 py-1 text-xs font-bold text-indigo-700 transition hover:bg-indigo-100;
+}
+
+.campaign-editor {
+  @apply grid gap-4;
+}
+
+.campaign-prompt-preview {
+  @apply mt-4 rounded-lg border border-slate-100 bg-slate-50 p-3;
+}
+
+.campaign-just-saved {
+  @apply ring-2 ring-emerald-400;
+}

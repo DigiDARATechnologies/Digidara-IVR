@@ -1,0 +1,51 @@
+# Direct production dependencies pinned from the known-working Python 3.11
+# repository virtual environment on 2026-08-05. Re-pin deliberately after
+# testing upgrades; do not run an unreviewed `pip freeze` over this file.
+
+# Plivo Voice API, XML callbacks, V3 signature validation
+plivo==4.61.0
+
+# Web framework and data validation
+fastapi==0.141.1
+uvicorn[standard]==0.52.1
+pydantic==2.13.4
+
+# LLM (Groq) - includes AsyncGroq for streaming
+groq==1.6.0
+
+# HTTP clients. Both are used directly by application modules.
+httpx==0.28.1
+requests==2.34.2
+openpyxl==3.1.5
+
+# Database and environment configuration
+pymysql==1.2.0
+python-dotenv==1.2.2
+
+# File uploads (multipart forms)
+python-multipart==0.0.32
+
+# PDF/DOCX text extraction for knowledge-base document uploads
+pypdf==6.15.0
+python-docx==1.2.0
+
+# WebSockets (Plivo Audio Streaming and OpenAI Realtime)
+websockets==16.1.1
+
+# Standard MCP server used by the Nectar Facility Operations tool boundary.
+# Tool functions remain in app/facility/mcp; the SDK only provides protocol transport.
+mcp==2.0.0
+
+# Google Sheets and service-account integration
+gspread==6.2.1
+google-auth==2.56.2
+
+# ORM scaffolding (legacy models - not used by the active raw-SQL path)
+sqlalchemy==2.0.51
+
+# RAG / vector store. The active English/Tamil call path uses the in-memory
+# BM25 index; ChromaDB supports only the knowledge-base administration API.
+chromadb==1.5.9
+
+# Plivo Audio Streaming uses FastAPI's WebSocket support from uvicorn[standard].
+# No extra package is needed for the in-memory BM25 index.

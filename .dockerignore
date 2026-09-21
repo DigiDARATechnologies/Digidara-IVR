@@ -1,0 +1,10 @@
+.git
+.venv
+venv
+node_modules
+dist
+.env
+credentials.json
+audio_cache
+logs
+app/data/chroma

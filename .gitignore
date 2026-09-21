@@ -1,0 +1,48 @@
+# Environment
+.env
+.env.*
+!.env.example
+*.local
+.envrc
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+venv/
+.venv/
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Runtime data and generated files
+audio_cache/
+logs/
+app.db
+credentials.json
+*.wav
+*.mp3
+*.log
+*.sqlite3
+
+# Vector / knowledge data
+app/data/chroma/
+app/data/kb_uploads/
+
+# Node / frontend
+node_modules/
+dist/
+build/
+*.tsbuildinfo
+
+# IDE / editor
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db

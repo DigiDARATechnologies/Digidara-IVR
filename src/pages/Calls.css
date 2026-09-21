@@ -1,0 +1,21 @@
+.calls-filters {
+  @apply mb-4 grid gap-3 sm:grid-cols-2 md:grid-cols-[1fr_180px_160px_160px];
+}
+
+.live-strip {
+  @apply flex flex-wrap items-center gap-3 overflow-x-auto rounded-xl border border-amber-100 bg-amber-50 p-3;
+}
+
+.calls-live-label {
+  @apply text-sm font-bold text-amber-800;
+}
+
+.live-dot {
+  @apply h-2.5 w-2.5 flex-shrink-0 animate-pulse rounded-full bg-emerald-500;
+}
+
+@media (max-width: 767px) {
+  .calls-table {
+    display: none;
+  }
+}
